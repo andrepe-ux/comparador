@@ -1,0 +1,603 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Analisador de Excel — Melhorado com Análise Narrativa</title>
+<script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  .chart-wrapper { height: 360px; position: relative; }
+</style>
+</head>
+<body class="bg-gray-50 text-gray-900 font-sans p-6 max-w-7xl mx-auto">
+
+<h1 class="text-2xl font-bold mb-4">Analisador de Excel — Totais, Percentagens e Análise Narrativa</h1>
+
+<div class="bg-white shadow rounded p-4 mb-6">
+  <label class="block font-medium mb-2" for="file">Escolher arquivo Excel</label>
+  <input id="file" type="file" accept=".xlsx,.xls,.csv" class="border rounded p-2 w-full"/>
+  <p class="text-sm text-gray-600 mt-2">Detecta blocos (zonas) automaticamente. A primeira linha de cada bloco é tratada como cabeçalho.</p>
+</div>
+
+<div id="main" class="hidden space-y-6">
+
+  <!-- Idioma -->
+  <div class="bg-white shadow rounded p-4 flex items-center justify-between">
+    <div>
+      <label class="font-semibold mr-2">Idioma da exportação / análisis:</label>
+      <select id="langSelect" class="border rounded p-2">
+        <option value="PT">Português (PT-PT)</option>
+        <option value="ES">Español (ES-ES)</option>
+      </select>
+    </div>
+    <div>
+      <label class="inline-flex items-center gap-2">
+        <input id="includeAnalysis" type="checkbox" checked class="rounded"/> 
+        <span class="text-sm">Incluir análise narrativa no export (IA)</span>
+      </label>
+    </div>
+  </div>
+
+  <!-- Quadro Totais e Percentagens (sem linhas de totals adicionais) -->
+  <div class="bg-white shadow rounded p-4 space-y-4">
+    <div class="flex justify-between items-center">
+      <strong class="block mb-2">Totais e Percentagens por Zona</strong>
+      <div class="flex gap-2">
+        <button id="selectAllZonesBtn" class="bg-gray-200 px-3 py-1 rounded">Selecionar Todas Zonas</button>
+        <button id="exportTotalsBtn" class="bg-gray-700 text-white px-3 py-1 rounded hover:bg-gray-800">Exportar TXT</button>
+      </div>
+    </div>
+
+    <div class="flex flex-wrap gap-4 items-center mb-2">
+      <label class="flex-1">
+        Zonas:
+        <select id="selectZones" multiple class="border rounded p-2 w-full h-32"></select>
+      </label>
+      <div class="flex flex-col gap-2">
+        <button id="computeBtn" class="bg-green-600 text-white font-semibold px-4 py-2 rounded hover:bg-green-700">Calcular</button>
+      </div>
+    </div>
+
+    <div id="resultsTable" class="overflow-auto max-h-96 border rounded p-2 bg-gray-50"></div>
+  </div>
+
+  <!-- Gráfico por Zona -->
+  <div class="bg-white shadow rounded p-4">
+    <div class="flex justify-between items-center">
+      <strong class="block mb-2">Gráfico da Zona</strong>
+      <div class="flex gap-2">
+        <button id="selectAllChartMonthsBtn" class="bg-gray-200 px-3 py-1 rounded">Selecionar Todos Meses</button>
+        <button id="exportChartBtn" class="bg-gray-700 text-white px-3 py-1 rounded hover:bg-gray-800">Exportar TXT</button>
+      </div>
+    </div>
+
+    <div class="flex gap-4 items-center mb-2">
+      <label class="flex-1">
+        Selecionar Zona:
+        <select id="chartZone" class="border rounded p-2 w-full"></select>
+      </label>
+      <label class="flex-1">
+        Selecionar Meses:
+        <select id="chartMonths" multiple class="border rounded p-2 w-full h-40"></select>
+      </label>
+      <div>
+        <button id="drawChartBtn" class="bg-blue-600 text-white font-semibold px-4 py-2 rounded hover:bg-blue-700">Gerar Gráfico</button>
+      </div>
+    </div>
+
+    <div class="chart-wrapper">
+      <canvas id="chartCanvas"></canvas>
+    </div>
+  </div>
+
+  <!-- Comparador de Zonas -->
+  <div class="bg-white shadow rounded p-4">
+    <div class="flex justify-between items-center">
+      <strong class="block mb-2">Comparador de Zonas</strong>
+      <div class="flex gap-2">
+        <button id="selectAllCompareBtn" class="bg-gray-200 px-3 py-1 rounded">Selecionar Todos</button>
+        <button id="exportCompareBtn" class="bg-gray-700 text-white px-3 py-1 rounded hover:bg-gray-800">Exportar TXT</button>
+      </div>
+    </div>
+
+    <div class="flex flex-wrap gap-4 items-center mb-2">
+      <label class="flex-1">
+        Zonas:
+        <select id="compareZones" multiple class="border rounded p-2 w-full h-32"></select>
+      </label>
+      <label class="flex-1">
+        Motivos:
+        <select id="compareMotives" multiple class="border rounded p-2 w-full h-32"></select>
+      </label>
+      <label class="flex-1">
+        Meses:
+        <select id="compareMonths" multiple class="border rounded p-2 w-full h-32"></select>
+      </label>
+      <div>
+        <button id="compareBtn" class="bg-blue-600 text-white font-semibold px-4 py-2 rounded hover:bg-blue-700">Comparar</button>
+      </div>
+    </div>
+
+    <div class="chart-wrapper">
+      <canvas id="compareCanvas"></canvas>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* DOM */
+const fileInput = document.getElementById('file');
+const main = document.getElementById('main');
+const langSelect = document.getElementById('langSelect');
+const includeAnalysis = document.getElementById('includeAnalysis');
+
+const selectZones = document.getElementById('selectZones');
+const selectAllZonesBtn = document.getElementById('selectAllZonesBtn');
+const computeBtn = document.getElementById('computeBtn');
+const resultsTable = document.getElementById('resultsTable');
+const exportTotalsBtn = document.getElementById('exportTotalsBtn');
+
+const chartZone = document.getElementById('chartZone');
+const chartMonths = document.getElementById('chartMonths');
+const selectAllChartMonthsBtn = document.getElementById('selectAllChartMonthsBtn');
+const drawChartBtn = document.getElementById('drawChartBtn');
+const chartCanvas = document.getElementById('chartCanvas');
+const exportChartBtn = document.getElementById('exportChartBtn');
+
+const compareZones = document.getElementById('compareZones');
+const compareMotives = document.getElementById('compareMotives');
+const compareMonths = document.getElementById('compareMonths');
+const selectAllCompareBtn = document.getElementById('selectAllCompareBtn');
+const compareBtn = document.getElementById('compareBtn');
+const compareCanvas = document.getElementById('compareCanvas');
+const exportCompareBtn = document.getElementById('exportCompareBtn');
+
+let zones = {};
+let chartInstance = null;
+let compareInstance = null;
+
+let latestTotalsTxt = '';
+let latestChartTxt = '';
+let latestCompareTxt = '';
+
+/* Helpers */
+function getColor(i){ const colors=['#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f','#edc949','#af7aa1','#ff9da7','#9c755f','#bab0ac']; return colors[i%colors.length]; }
+function normal(v){ return v ? v.toString().trim() : ''; }
+function isTicketsLabel(text){
+  if(!text) return false;
+  const s = text.toString().trim().toLowerCase();
+  return s.includes("nº tickets") || s.includes("nºticket") || s.includes("tickets");
+}
+function isClientsLabel(text){
+  if(!text) return false;
+  const s = text.toString().trim().toLowerCase();
+  return s.includes("nº clientes") || s.includes("clientes");
+}
+
+/* Detect zones in sheet (blocks) */
+function detectZones(ws){
+  if(!ws || !ws['!ref']) return [];
+  const range = XLSX.utils.decode_range(ws['!ref']);
+  let currentZone = [];
+  const zonesArr = [];
+  for(let R=range.s.r; R<=range.e.r; R++){
+    const firstCell = ws[XLSX.utils.encode_cell({c:0,r:R})];
+    const value = firstCell ? firstCell.v : null;
+    const valLower = value ? value.toString().trim().toLowerCase() : '';
+    if(!value || valLower==='' || valLower.includes("nº tickets") || valLower.includes("nº clientes") ){
+      if(currentZone.length){ zonesArr.push(currentZone); currentZone = []; }
+      continue;
+    }
+    let row = [];
+    for(let C=range.s.c; C<=range.e.c; C++){
+      const cell = ws[XLSX.utils.encode_cell({c:C,r:R})];
+      row.push(cell ? cell.v : null);
+    }
+    currentZone.push(row);
+  }
+  if(currentZone.length) zonesArr.push(currentZone);
+  return zonesArr;
+}
+
+function convertZoneToJSON(zone){
+  const headers = zone[0].map(h => normal(h));
+  return zone.slice(1).map(r => {
+    const obj = {};
+    headers.forEach((h,i) => obj[h]=r[i]);
+    return obj;
+  });
+}
+
+/* Update UI after load */
+function updateUI(){
+  selectZones.innerHTML = '';
+  chartZone.innerHTML = '';
+  compareZones.innerHTML = '';
+  compareMotives.innerHTML = '';
+  compareMonths.innerHTML = '';
+  Object.keys(zones).forEach(z=>{
+    const o=document.createElement('option'); o.value=z; o.textContent=z;
+    selectZones.appendChild(o.cloneNode(true));
+    chartZone.appendChild(o.cloneNode(true));
+    compareZones.appendChild(o.cloneNode(true));
+  });
+  populateCompareMotives();
+  populateCompareMonths();
+  main.classList.remove('hidden');
+}
+
+/* File load */
+fileInput.addEventListener('change', async e=>{
+  const f = e.target.files[0]; if(!f) return;
+  try{
+    const buf = await f.arrayBuffer();
+    const wb = XLSX.read(buf, { type:'array' });
+    zones={}; let zoneCount=0;
+    Object.keys(wb.Sheets).forEach(sheetName=>{
+      const ws = wb.Sheets[sheetName];
+      detectZones(ws).forEach(zone=>{
+        zoneCount++;
+        const zoneName = zone[0][0] ? zone[0][0].toString() : `Zona ${zoneCount}`;
+        zones[`${sheetName} - ${zoneName}`] = convertZoneToJSON(zone);
+      });
+    });
+    if(Object.keys(zones).length===0) alert("Nenhuma zona detectada; verifica o formato do ficheiro.");
+    updateUI();
+  } catch(err){
+    console.error(err);
+    alert("Erro ao ler o ficheiro. Valida o .xlsx/.xls/.csv");
+  }
+});
+
+/* Select all helpers */
+function selectAllOptions(sel){ for(let i=0;i<sel.options.length;i++) sel.options[i].selected=true; }
+selectAllZonesBtn.addEventListener('click', ()=>selectAllOptions(selectZones));
+selectAllChartMonthsBtn.addEventListener('click', ()=>selectAllOptions(chartMonths));
+selectAllCompareBtn.addEventListener('click', ()=>{ selectAllOptions(compareZones); selectAllOptions(compareMotives); selectAllOptions(compareMonths); });
+
+/* ---------- Narrative (IA-like) generator ---------- */
+function generateNarrative(zoneName, data, months, ticketsRow, clientsRow, lang){
+  // Simple stats: sum per motive, overall top/bottom motive, month with max total motives, trend tickets/clients
+  const firstKey = Object.keys(data[0])[0];
+  const motivesRows = data.filter(r => {
+    const v = normal(r[firstKey]).toLowerCase();
+    return !isTicketsLabel(v) && !isClientsLabel(v);
+  });
+  const motiveSums = motivesRows.map(r=>{
+    let sum=0; months.forEach(m=> sum += Number(r[m])||0);
+    return { motive: r[firstKey], sum };
+  });
+  motiveSums.sort((a,b)=>b.sum-a.sum);
+  const top = motiveSums[0] || null;
+  const bottom = motiveSums[motiveSums.length-1] || null;
+
+  // month totals
+  const monthTotals = months.map(m=>{
+    let s=0; motivesRows.forEach(r=> s+= Number(r[m])||0); return { month: m, total: s };
+  });
+  monthTotals.sort((a,b)=>b.total-a.total);
+  const maxMonth = monthTotals[0] || null;
+
+  // tickets/clients trend: compare average of first half vs second half
+  function trendFor(row){
+    if(!row) return null;
+    const vals = months.map(m=> Number(row[m])||0);
+    const half = Math.floor(vals.length/2) || 1;
+    const firstAvg = vals.slice(0,half).reduce((a,b)=>a+b,0)/half;
+    const secondAvg = vals.slice(half).reduce((a,b)=>a+b,0)/(vals.length-half || 1);
+    if(secondAvg > firstAvg*1.05) return 'up';
+    if(secondAvg < firstAvg*0.95) return 'down';
+    return 'stable';
+  }
+  const ticketsTrend = trendFor(ticketsRow);
+  const clientsTrend = trendFor(clientsRow);
+
+  // detect many zeros or missing
+  const zeroMotives = motiveSums.filter(m=>m.sum===0).map(m=>m.motive);
+
+  // Build narrative in chosen language
+  if(lang==='ES'){
+    let txt = `Análisis de la zona: ${zoneName}\n`;
+    if(top) txt += `- Motivo con mayor volumen: ${top.motive} (total ${top.sum}).\n`;
+    if(bottom) txt += `- Motivo con menor volumen: ${bottom.motive} (total ${bottom.sum}).\n`;
+    if(maxMonth) txt += `- Mes con mayor actividad (suma de motivos): ${maxMonth.month} (${maxMonth.total}).\n`;
+    if(ticketsRow){
+      const tLabel = normal(ticketsRow[firstKey]) || 'Nº TICKETS';
+      txt += `- Tendencia de ${tLabel}: ${ticketsTrend==='up'?'Aumento':'Descenso'}${ticketsTrend==='stable'?' (estable)':''}.\n`;
+    }
+    if(clientsRow){
+      const cLabel = normal(clientsRow[firstKey]) || 'Nº CLIENTES';
+      txt += `- Tendencia de ${cLabel}: ${clientsTrend==='up'?'Aumento':'Descenso'}${clientsTrend==='stable'?' (estable)':''}.\n`;
+    }
+    if(zeroMotives.length>0){
+      txt += `- Observación: ${zeroMotives.length} motivo(s) sin registros: ${zeroMotives.slice(0,6).join(', ')}${zeroMotives.length>6?'...':''}.\n`;
+    }
+    txt += `\n`;
+    return txt;
+  } else {
+    // PT default
+    let txt = `Análise da zona: ${zoneName}\n`;
+    if(top) txt += `- Motivo com maior volume: ${top.motive} (total ${top.sum}).\n`;
+    if(bottom) txt += `- Motivo com menor volume: ${bottom.motive} (total ${bottom.sum}).\n`;
+    if(maxMonth) txt += `- Mês com maior atividade (soma de motivos): ${maxMonth.month} (${maxMonth.total}).\n`;
+    if(ticketsRow){
+      const tLabel = normal(ticketsRow[firstKey]) || 'Nº TICKETS';
+      txt += `- Tendência de ${tLabel}: ${ticketsTrend==='up'?'Aumento':'Queda'}${ticketsTrend==='stable'?' (estável)':''}.\n`;
+    }
+    if(clientsRow){
+      const cLabel = normal(clientsRow[firstKey]) || 'Nº CLIENTES';
+      txt += `- Tendência de ${cLabel}: ${clientsTrend==='up'?'Aumento':'Queda'}${clientsTrend==='stable'?' (estável)':''}.\n`;
+    }
+    if(zeroMotives.length>0){
+      txt += `- Observação: ${zeroMotives.length} motivo(s) sem registos: ${zeroMotives.slice(0,6).join(', ')}${zeroMotives.length>6?'...':''}.\n`;
+    }
+    txt += `\n`;
+    return txt;
+  }
+}
+
+/* ---------- Compute Totals & Percentages (sem linhas de totais extra) ---------- */
+computeBtn.addEventListener('click', ()=>{
+  const lang = langSelect.value;
+  const selectedZonesArr = Array.from(selectZones.selectedOptions).map(o=>o.value);
+  if(selectedZonesArr.length===0) return alert(lang==='ES' ? "Selecciona al menos una zona" : "Selecione ao menos uma zona");
+  resultsTable.innerHTML = '';
+  latestTotalsTxt = '';
+
+  selectedZonesArr.forEach(z=>{
+    const data = zones[z];
+    if(!data || data.length===0) return;
+    const keys = Object.keys(data[0]);
+    if(keys.length < 2) return;
+    const months = keys.slice(1);
+    const firstKey = keys[0];
+
+    // identificar tickets/clients
+    let ticketsRow = null, clientsRow = null;
+    for(const r of data){
+      const fv = normal(r[firstKey]).toLowerCase();
+      if(isTicketsLabel(fv)) ticketsRow = r;
+      else if(isClientsLabel(fv)) clientsRow = r;
+    }
+
+    // motivos (todos da coluna A exceto tickets/clients)
+    const motivesRows = data.filter(r=>{
+      const v = normal(r[firstKey]).toLowerCase();
+      return !isTicketsLabel(v) && !isClientsLabel(v);
+    });
+
+    // montar tabela (sem linhas de totais)
+    let html = `<h4 class="font-semibold mb-1">${z}</h4>`;
+    html += `<table class="border-collapse border w-full text-sm mb-3">
+      <thead><tr class="bg-gray-100"><th class="border px-2 py-1">Motivo</th>`;
+    months.forEach(m=> html += `<th class="border px-2 py-1">${m}</th>`);
+    html += `</tr></thead><tbody>`;
+
+    latestTotalsTxt += `\n=== ${z} ===\n`;
+
+    motivesRows.forEach(r=>{
+      const motive = r[firstKey];
+      html += `<tr><td class="border px-2 py-1 font-semibold">${motive}</td>`;
+      latestTotalsTxt += `${motive}: `;
+      months.forEach(m=>{
+        const val = Number(r[m])||0;
+        const baseClients = clientsRow ? (Number(clientsRow[m])||0) : 0;
+        const baseTickets = ticketsRow ? (Number(ticketsRow[m])||0) : 0;
+        const percentClients = baseClients>0 ? ((val/baseClients)*100).toFixed(1) + '%' : '-';
+        const percentTickets = baseTickets>0 ? ((val/baseTickets)*100).toFixed(1) + '%' : '-';
+        html += `<td class="border px-2 py-1">${val} (${percentClients} / ${percentTickets})</td>`;
+        latestTotalsTxt += `${m}=${val} (${percentClients}/${percentTickets}); `;
+      });
+      html += `</tr>`;
+      latestTotalsTxt += `\n`;
+    });
+
+    // manter linhas Nº TICKETS e Nº CLIENTES se existirem (mas sem totais extras)
+    if(ticketsRow){
+      html += `<tr class="bg-gray-200 font-semibold"><td class="border px-2 py-1">Nº TICKETS</td>`;
+      months.forEach(m=> html += `<td class="border px-2 py-1">${Number(ticketsRow[m])||0}</td>`);
+      html += `</tr>`;
+    }
+    if(clientsRow){
+      html += `<tr class="bg-gray-200 font-semibold"><td class="border px-2 py-1">Nº CLIENTES</td>`;
+      months.forEach(m=> html += `<td class="border px-2 py-1">${Number(clientsRow[m])||0}</td>`);
+      html += `</tr>`;
+    }
+
+    html += `</tbody></table>`;
+    resultsTable.innerHTML += html;
+
+    // gerar narrativa se ativado
+    if(includeAnalysis.checked){
+      const narrative = generateNarrative(z, data, months, ticketsRow, clientsRow, lang);
+      latestTotalsTxt += `\n=== Análise Narrativa ===\n` + narrative;
+      // também mostrar a narrativa na UI abaixo da tabela
+      const pre = document.createElement('pre');
+      pre.className = 'bg-gray-100 p-3 rounded text-sm whitespace-pre-wrap';
+      pre.textContent = (lang==='ES' ? 'Análisis narrativo:\n' : 'Análise narrativa:\n') + narrative;
+      resultsTable.appendChild(pre);
+    }
+  }); // end forEach
+});
+
+/* ---------- Export helpers ---------- */
+function buildExportHeader(lang, title){
+  if(lang==='ES') return `Exportación - ${title}\nGenerado en: ${new Date().toLocaleString('es-ES')}\n\n`;
+  return `Exportação - ${title}\nGerado em: ${new Date().toLocaleString('pt-PT')}\n\n`;
+}
+function downloadTxtFile(filename, content){
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 1500);
+}
+
+/* Export totals (inclui análise se selecionada) */
+exportTotalsBtn.addEventListener('click', ()=>{
+  const lang = langSelect.value;
+  const header = buildExportHeader(lang, (lang==='ES'?"Totales y Porcentajes":"Totais e Percentagens"));
+  const body = latestTotalsTxt || (lang==='ES' ? "Sin resultados" : "Sem resultados");
+  const filename = (lang==='ES' ? "analisis_totales.txt" : "analise_totais.txt");
+  downloadTxtFile(filename, header + body);
+});
+
+/* ---------- Chart logic ---------- */
+chartZone.addEventListener('change', ()=>{
+  const z = chartZone.value; if(!z) return;
+  const data = zones[z]; if(!data || data.length===0) return;
+  const months = Object.keys(data[0]).slice(1);
+  chartMonths.innerHTML = '';
+  months.forEach(m => { const opt = document.createElement('option'); opt.value=m; opt.textContent=m; chartMonths.appendChild(opt); });
+});
+
+drawChartBtn.addEventListener('click', ()=>{
+  const lang = langSelect.value;
+  const z = chartZone.value;
+  const selectedMonthsArr = Array.from(chartMonths.selectedOptions).map(o=>o.value);
+  if(!z || selectedMonthsArr.length===0) return alert(lang==='ES' ? "Selecciona zona y meses" : "Selecione zona e meses");
+  const data = zones[z];
+  const firstKey = Object.keys(data[0])[0];
+  const motives = data.filter(r=>{ const v=normal(r[firstKey]).toLowerCase(); return !isTicketsLabel(v) && !isClientsLabel(v); }).map(r=> r[firstKey]);
+
+  const datasets = [];
+  latestChartTxt = `Zona: ${z}\n`;
+  selectedMonthsArr.forEach((mm,i)=>{
+    const values = data.filter(r=>{ const v=normal(r[firstKey]).toLowerCase(); return !isTicketsLabel(v) && !isClientsLabel(v); }).map(r=>Number(r[mm])||0);
+    datasets.push({ label:mm, data:values, backgroundColor: getColor(i) });
+    latestChartTxt += `${mm}: ${values.join(', ')}\n`;
+  });
+
+  if(chartInstance) chartInstance.destroy();
+  chartInstance = new Chart(chartCanvas.getContext('2d'), {
+    type:'bar',
+    data:{ labels: motives, datasets },
+    options:{ responsive:true, maintainAspectRatio:false,
+      plugins:{ datalabels:{ anchor:'end', align:'end', formatter: Math.round, font:{weight:'bold'} } } },
+    plugins:[ChartDataLabels]
+  });
+
+  // add narrative about chart (simple): top motive for selected months
+  if(includeAnalysis.checked){
+    // compute sum per motive across selected months
+    const sums = motives.map((mot,i)=>{
+      let s=0;
+      selectedMonthsArr.forEach(m=>{ s += Number(zones[z][i+0][m])||0; }); // careful: mapping by filter index — instead compute robustly
+      return s;
+    });
+    // better robust compute:
+    const motiveSums = motives.map(mot=>{
+      let s=0;
+      zones[z].forEach(r=>{
+        if(normal(r[firstKey])===normal(mot)){
+          selectedMonthsArr.forEach(m=> s += Number(r[m])||0);
+        }
+      });
+      return {mot:mot, sum:s};
+    }).sort((a,b)=>b.sum-a.sum);
+    const langTxt = langSelect.value;
+    let narrative = langTxt==='ES' ? `Análisis del gráfico para ${z}:\n` : `Análise do gráfico para ${z}:\n`;
+    if(motiveSums.length>0){
+      narrative += (langTxt==='ES' ? `- Motivo principal: ${motiveSums[0].mot} (total ${motiveSums[0].sum}).\n` : `- Motivo principal: ${motiveSums[0].mot} (total ${motiveSums[0].sum}).\n`);
+      if(motiveSums.length>1) narrative += (langTxt==='ES' ? `- Segundo: ${motiveSums[1].mot} (total ${motiveSums[1].sum}).\n` : `- Segundo: ${motiveSums[1].mot} (total ${motiveSums[1].sum}).\n`);
+    }
+    latestChartTxt += `\n=== Análisis Narrativo ===\n` + narrative;
+  }
+});
+
+/* Export chart txt */
+exportChartBtn.addEventListener('click', ()=>{
+  const lang = langSelect.value;
+  const header = buildExportHeader(lang, (lang==='ES'?"Gráfico de Zona":"Gráfico da Zona"));
+  const body = latestChartTxt || (lang==='ES'?"Sin resultados":"Sem resultados");
+  const filename = (lang==='ES'?"analisis_grafico.txt":"analise_grafico.txt");
+  downloadTxtFile(filename, header + body);
+});
+
+/* ---------- Comparador ---------- */
+function populateCompareMotives(){
+  const firstZone = Object.values(zones)[0];
+  if(!firstZone) return;
+  const firstKey = Object.keys(firstZone[0])[0];
+  const motives = Array.from(new Set(firstZone.map(r=> r[firstKey])));
+  compareMotives.innerHTML = '';
+  motives.forEach(m=>{ const o=document.createElement('option'); o.value=m; o.textContent=m; compareMotives.appendChild(o); });
+}
+function populateCompareMonths(){
+  const firstZone = Object.values(zones)[0];
+  if(!firstZone) return;
+  const months = Object.keys(firstZone[0]).slice(1);
+  compareMonths.innerHTML = '';
+  months.forEach(m=>{ const o=document.createElement('option'); o.value=m; o.textContent=m; compareMonths.appendChild(o); });
+}
+
+compareBtn.addEventListener('click', ()=>{
+  const lang = langSelect.value;
+  const selectedZonesArr = Array.from(compareZones.selectedOptions).map(o=>o.value);
+  const selectedMotivesArr = Array.from(compareMotives.selectedOptions).map(o=>o.value);
+  const selectedMonthsArr = Array.from(compareMonths.selectedOptions).map(o=>o.value);
+  if(selectedZonesArr.length===0 || selectedMotivesArr.length===0 || selectedMonthsArr.length===0) return alert(lang==='ES' ? "Selecciona zonas, motivos y meses" : "Selecione zonas, motivos e meses");
+
+  const labels = selectedMotivesArr;
+  const datasets = [];
+  latestCompareTxt = '';
+
+  selectedZonesArr.forEach((z,i)=>{
+    const zoneData = zones[z];
+    const firstKey = Object.keys(zoneData[0])[0];
+    const data = zoneData.filter(r => selectedMotivesArr.includes(r[firstKey]));
+    const totals = data.map(r=>{
+      let s=0; selectedMonthsArr.forEach(m => s += Number(r[m])||0); return s;
+    });
+    datasets.push({ label: z, data: totals, backgroundColor: getColor(i) });
+    latestCompareTxt += `${z}: ${totals.join(', ')}\n`;
+  });
+
+  if(compareInstance) compareInstance.destroy();
+  compareInstance = new Chart(compareCanvas.getContext('2d'), {
+    type:'bar',
+    data:{ labels, datasets },
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{ datalabels:{ anchor:'end', align:'end', formatter:Math.round, font:{weight:'bold'} } } },
+    plugins:[ChartDataLabels]
+  });
+
+  // add narrative for comparator
+  if(includeAnalysis.checked){
+    const langTxt = langSelect.value;
+    let narrative = langTxt==='ES' ? `Análisis comparador:\n` : `Análise do comparador:\n`;
+    // For each motive, say which zone had highest value
+    labels.forEach((mot)=>{
+      // compute values per zone for this motive
+      const zoneVals = selectedZonesArr.map(z=>{
+        const zoneData = zones[z];
+        const firstKey = Object.keys(zoneData[0])[0];
+        const row = zoneData.find(r => normal(r[firstKey]) === normal(mot));
+        let s=0; if(row) selectedMonthsArr.forEach(m=> s += Number(row[m])||0);
+        return { zone:z, sum:s };
+      });
+      zoneVals.sort((a,b)=>b.sum-a.sum);
+      if(zoneVals.length>0){
+        narrative += langTxt==='ES' ? `- Para '${mot}', la zona con mayor total: ${zoneVals[0].zone} (${zoneVals[0].sum}).\n`
+                                  : `- Para '${mot}', a zona com maior total: ${zoneVals[0].zone} (${zoneVals[0].sum}).\n`;
+      }
+    });
+    latestCompareTxt += `\n=== Análise Narrativa ===\n` + narrative;
+  }
+});
+
+/* Export compare */
+exportCompareBtn.addEventListener('click', ()=>{
+  const lang = langSelect.value;
+  const header = buildExportHeader(lang, (lang==='ES'?"Comparador de Zonas":"Comparador de Zonas"));
+  const body = latestCompareTxt || (lang==='ES'?"Sin resultados":"Sem resultados");
+  const filename = (lang==='ES'?"analisis_comparador.txt":"analise_comparador.txt");
+  downloadTxtFile(filename, header + body);
+});
+
+</script>
+
+</body>
+</html>
